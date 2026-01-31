@@ -2,13 +2,10 @@
 <html lang="pt-BR">
   <head>
     <meta charset="UTF-8" />
-    <title>Transcrição de Voz - Organização Pessoal</title>
+    <title>Transcrição de Voz</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
     <style>
-      /* ============================
-         ESTILOS GERAIS DA PÁGINA
-      ============================ */
       * {
         box-sizing: border-box;
         margin: 0;
@@ -41,12 +38,12 @@
         border: 1px solid #1f2937;
       }
 
-      .app h1 {
+      h1 {
         font-size: 1.4rem;
         margin-bottom: 6px;
       }
 
-      .app p.sub {
+      .sub {
         font-size: 0.9rem;
         color: #9ca3af;
         margin-bottom: 16px;
@@ -96,7 +93,7 @@
         color: #fef2f2;
       }
 
-      #btnCopy {
+      #btnClear {
         background: #0ea5e9;
         color: #e0f2fe;
       }
@@ -142,20 +139,17 @@
       <h1>Transcrição de Voz</h1>
       <p class="sub">Fale e veja o texto aparecer automaticamente.</p>
 
-      <!-- Status da gravação -->
       <div class="status" id="status">
         Status: <span class="status-idle">Parado</span>
       </div>
 
-      <!-- Botões principais -->
       <div class="buttons">
         <button id="btnStart">Iniciar</button>
         <button id="btnStop" disabled>Parar</button>
-        <button id="btnCopy">Copiar</button>
+        <button id="btnClear">Limpar</button>
         <button id="btnSendWhats">Enviar WhatsApp</button>
       </div>
 
-      <!-- Saída do texto -->
       <textarea
         id="output"
         placeholder="O texto da sua fala aparecerá aqui..."
@@ -169,9 +163,6 @@
     </div>
 
     <script>
-      // ===============================
-      //   ELEMENTOS HTML
-      // ===============================
       const SpeechRecognition =
         window.SpeechRecognition || window.webkitSpeechRecognition;
 
@@ -180,47 +171,68 @@
       const outputEl = document.getElementById("output");
       const btnStart = document.getElementById("btnStart");
       const btnStop = document.getElementById("btnStop");
-      const btnCopy = document.getElementById("btnCopy");
+      const btnClear = document.getElementById("btnClear");
       const btnSendWhats = document.getElementById("btnSendWhats");
 
       let recognition = null;
       let finalTranscript = "";
+      let lastFinalAdded = "";
+      let isRecording = false;
 
-      if (SpeechRecognition) {
+      // Remove sobreposição típica do Chrome Android
+      function removeOverlap(prev, next) {
+        prev = (prev || "").trim();
+        next = (next || "").trim();
+        if (!prev || !next) return next;
+
+        const max = Math.min(prev.length, next.length);
+        for (let size = max; size >= 10; size--) {
+          const suffix = prev.slice(-size);
+          const prefix = next.slice(0, size);
+          if (suffix === prefix) {
+            return next.slice(size).trim();
+          }
+        }
+        return next;
+      }
+
+      if (!SpeechRecognition) {
+        warningEl.textContent =
+          "Seu navegador não suporta reconhecimento de voz. Use Chrome ou Edge.";
+        btnStart.disabled = true;
+        btnStop.disabled = true;
+      } else {
         recognition = new SpeechRecognition();
         recognition.lang = "pt-BR";
-        recognition.continuous = true;
+        recognition.continuous = false; // essencial no Android
         recognition.interimResults = true;
         recognition.maxAlternatives = 1;
 
-        // ✅ SOLUÇÃO: reconstrói o texto completo (final + interim) sem duplicar
         recognition.onresult = (event) => {
-          let finalText = "";
-          let interimText = "";
+          let interim = "";
 
-          // IMPORTANTe:
-          // - event.results é uma lista "viva" de tudo que já foi reconhecido nesta sessão
-          // - então a forma mais segura é: montar finalText a partir de TODOS os resultados finais
-          for (let i = 0; i < event.results.length; i++) {
-            const result = event.results[i];
-            const text = result[0].transcript;
+          for (let i = event.resultIndex; i < event.results.length; i++) {
+            const r = event.results[i];
+            const raw = r[0].transcript || "";
+            const text = raw.trim();
+            if (!text) continue;
 
-            if (result.isFinal) {
-              // Vai acumulando apenas os trechos finalizados
-              finalText += text.trim() + " ";
+            if (r.isFinal) {
+              if (text === lastFinalAdded) continue;
+
+              const toAdd = removeOverlap(finalTranscript, text);
+              if (toAdd) {
+                finalTranscript = (finalTranscript + " " + toAdd).trim();
+              }
+              lastFinalAdded = text;
             } else {
-              // O que ainda está "em andamento" (parcial)
-              interimText += text;
+              interim += raw;
             }
           }
 
-          // Guarda o final para manter estado (se precisar em outras partes)
-          finalTranscript = finalText.trim();
-
-          // Mostra final + parcial (o parcial some quando virar final)
-          outputEl.value = (finalText + interimText).trim();
+          outputEl.value = (finalTranscript + " " + interim).trim();
         };
-        // Se der erro (sem permissão, etc.)
+
         recognition.onerror = (event) => {
           statusEl.innerHTML =
             'Status: <span class="status-error">Erro: ' +
@@ -228,8 +240,16 @@
             "</span>";
         };
 
-        // Quando o reconhecimento para sozinho
         recognition.onend = () => {
+          if (isRecording) {
+            try {
+              recognition.start();
+              statusEl.innerHTML =
+                'Status: <span class="status-listening">Ouvindo...</span>';
+              return;
+            } catch {}
+          }
+
           btnStart.disabled = false;
           btnStop.disabled = true;
           statusEl.innerHTML =
@@ -237,13 +257,12 @@
         };
       }
 
-      // ===============================
-      //   INICIAR
-      // ===============================
       btnStart.addEventListener("click", () => {
         if (!recognition) return;
 
         warningEl.textContent = "";
+        isRecording = true;
+
         try {
           recognition.start();
           btnStart.disabled = true;
@@ -255,82 +274,48 @@
         }
       });
 
-      // ===============================
-      //   PARAR
-      // ===============================
       btnStop.addEventListener("click", () => {
         if (!recognition) return;
 
-        recognition.stop();
+        isRecording = false;
+        try {
+          recognition.stop();
+        } catch {}
+
         btnStart.disabled = false;
         btnStop.disabled = true;
-
         statusEl.innerHTML = 'Status: <span class="status-idle">Parado</span>';
       });
 
-      // ===============================
-      //   COPIAR TEXTO
-      // ===============================
-      btnCopy.addEventListener("click", async () => {
-        const text = outputEl.value.trim();
-        if (!text) {
-          warningEl.textContent = "Não há texto para copiar.";
-          return;
-        }
-
-        try {
-          await navigator.clipboard.writeText(text);
-          warningEl.textContent = "Copiado!";
-        } catch {
-          warningEl.textContent =
-            "Falha ao copiar. Selecione o texto e copie manualmente.";
-        }
+      // 🧹 LIMPAR
+      btnClear.addEventListener("click", () => {
+        finalTranscript = "";
+        lastFinalAdded = "";
+        outputEl.value = "";
+        warningEl.textContent = "";
       });
 
-      // ===============================
-      //   ENVIAR PRO WHATSAPP
-      // ===============================
       btnSendWhats.addEventListener("click", () => {
         const text = outputEl.value.trim();
-
         if (!text) {
           warningEl.textContent = "Digite ou grave algo para enviar.";
           return;
         }
 
-        // Pede o número na hora
         let number = prompt(
-          "Digite o número de WhatsApp COM DDD (apenas números):\nEx: 199971030409",
+          "Digite o número de WhatsApp COM DDD (apenas números):",
         );
+        if (!number) return;
 
-        if (!number) {
-          warningEl.textContent = "Envio cancelado: nenhum número informado.";
-          return;
-        }
-
-        // Remove tudo que não é dígito
         number = number.replace(/\D/g, "");
+        if (!number.startsWith("55")) number = "55" + number;
 
-        // Validação simples
-        if (number.length < 10) {
-          warningEl.textContent =
-            "Número inválido. Informe DDD + número (ex: 551199990000).";
-          return;
-        }
-
-        // Se não começar com 55, assume Brasil e adiciona 55
-        if (!number.startsWith("55")) {
-          number = "55" + number;
-        }
-
-        // Limite para URL (pra não estourar)
         const maxChars = 1500;
         const sendText =
-          text.length > maxChars ? text.substring(0, maxChars) + "..." : text;
+          text.length > maxChars ? text.slice(0, maxChars) + "..." : text;
 
         const url =
           "https://wa.me/" + number + "?text=" + encodeURIComponent(sendText);
-
         window.open(url, "_blank");
       });
     </script>
