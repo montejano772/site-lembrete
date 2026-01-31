@@ -186,35 +186,40 @@
       let recognition = null;
       let finalTranscript = "";
 
-      // ===============================
-      //   VERIFICA SUPORTE
-      // ===============================
-      if (!SpeechRecognition) {
-        warningEl.textContent =
-          "Seu navegador não suporta reconhecimento de voz. Use Chrome / Edge.";
-        btnStart.disabled = true;
-        btnStop.disabled = true;
-      } else {
+      if (SpeechRecognition) {
         recognition = new SpeechRecognition();
         recognition.lang = "pt-BR";
         recognition.continuous = true;
         recognition.interimResults = true;
+        recognition.maxAlternatives = 1;
 
-        // Quando chega resultado de voz
+        // ✅ SOLUÇÃO: reconstrói o texto completo (final + interim) sem duplicar
         recognition.onresult = (event) => {
-          let interim = "";
-          for (let i = event.resultIndex; i < event.results.length; i++) {
-            const r = event.results[i];
-            const t = r[0].transcript;
-            if (r.isFinal) {
-              finalTranscript += t + ". ";
+          let finalText = "";
+          let interimText = "";
+
+          // IMPORTANTe:
+          // - event.results é uma lista "viva" de tudo que já foi reconhecido nesta sessão
+          // - então a forma mais segura é: montar finalText a partir de TODOS os resultados finais
+          for (let i = 0; i < event.results.length; i++) {
+            const result = event.results[i];
+            const text = result[0].transcript;
+
+            if (result.isFinal) {
+              // Vai acumulando apenas os trechos finalizados
+              finalText += text.trim() + " ";
             } else {
-              interim += t;
+              // O que ainda está "em andamento" (parcial)
+              interimText += text;
             }
           }
-          outputEl.value = finalTranscript + interim;
-        };
 
+          // Guarda o final para manter estado (se precisar em outras partes)
+          finalTranscript = finalText.trim();
+
+          // Mostra final + parcial (o parcial some quando virar final)
+          outputEl.value = (finalText + interimText).trim();
+        };
         // Se der erro (sem permissão, etc.)
         recognition.onerror = (event) => {
           statusEl.innerHTML =
